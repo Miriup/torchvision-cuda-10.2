@@ -116,6 +116,7 @@ void Video::_getDecoderParams(
     std::string stream,
     long stream_id = -1,
     bool all_streams = false,
+    int64_t num_threads = 1,
     double seekFrameMarginUs = 10) {
   int64_t videoStartUs = int64_t(videoStartS * 1e6);
 
@@ -123,6 +124,7 @@ void Video::_getDecoderParams(
   params.startOffset = videoStartUs;
   params.seekAccuracy = seekFrameMarginUs;
   params.headerOnly = false;
+  params.numThreads = num_threads;
 
   params.preventStaleness = false; // not sure what this is about
 
@@ -169,7 +171,9 @@ void Video::_getDecoderParams(
 
 } // _get decoder params
 
-Video::Video(std::string videoPath, std::string stream) {
+Video::Video(std::string videoPath, std::string stream, int64_t numThreads) {
+  // set number of threads global
+  numThreads_ = numThreads;
   // parse stream information
   current_stream = _parseStream(stream);
   // note that in the initial call we want to get all streams
@@ -178,7 +182,8 @@ Video::Video(std::string videoPath, std::string stream) {
       0, // headerOnly
       get<0>(current_stream), // stream info - remove that
       long(-1), // stream_id parsed from info above change to -2
-      true // read all streams
+      true, // read all streams
+      numThreads_ // global number of Threads for decoding
   );
 
   std::string logMessage, logType;
@@ -249,7 +254,8 @@ bool Video::setCurrentStream(std::string stream = "video") {
       get<0>(current_stream), // stream
       long(get<1>(
           current_stream)), // stream_id parsed from info above change to -2
-      false // read all streams
+      false, // read all streams
+      numThreads_ // global number of threads
   );
 
   // calback and metadata defined in Video.h
@@ -273,7 +279,8 @@ void Video::Seek(double ts) {
       get<0>(current_stream), // stream
       long(get<1>(
           current_stream)), // stream_id parsed from info above change to -2
-      false // read all streams
+      false, // read all streams
+      numThreads_ // global number of threads
   );
 
   // calback and metadata defined in Video.h

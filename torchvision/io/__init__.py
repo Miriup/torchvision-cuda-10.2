@@ -83,12 +83,16 @@ class VideoReader:
         stream (string, optional): descriptor of the required stream, followed by the stream id,
             in the format ``{stream_type}:{stream_id}``. Defaults to ``"video:0"``.
             Currently available options include ``['video', 'audio']``
+
+        num_threads (int, optional): number of threads used by the codec to decode video.
+            Default value (0) enables multithreading with codec-dependent heuristic. The performance
+            will depend on the version of FFMPEG codecs supported.
     """
 
     def __init__(self, path, stream="video"):
         if not _has_video_opt():
             raise RuntimeError("Not compiled with video_reader support")
-        self._c = torch.classes.torchvision.Video(path, stream)
+        self._c = torch.classes.torchvision.Video(path, stream, num_threads)
 
     def __next__(self):
         """Decodes and returns the next frame of the current stream
