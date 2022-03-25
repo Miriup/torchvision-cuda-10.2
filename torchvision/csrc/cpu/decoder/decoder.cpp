@@ -17,25 +17,6 @@ constexpr size_t kIoBufferSize = 96 * 1024;
 constexpr size_t kIoPaddingSize = AV_INPUT_BUFFER_PADDING_SIZE;
 constexpr size_t kLogBufferSize = 1024;
 
-int ffmpeg_lock(void** mutex, enum AVLockOp op) {
-  std::mutex** handle = (std::mutex**)mutex;
-  switch (op) {
-    case AV_LOCK_CREATE:
-      *handle = new std::mutex();
-      break;
-    case AV_LOCK_OBTAIN:
-      (*handle)->lock();
-      break;
-    case AV_LOCK_RELEASE:
-      (*handle)->unlock();
-      break;
-    case AV_LOCK_DESTROY:
-      delete *handle;
-      break;
-  }
-  return 0;
-}
-
 bool mapFfmpegType(AVMediaType media, MediaType* type) {
   switch (media) {
     case AVMEDIA_TYPE_AUDIO:
@@ -198,8 +179,6 @@ void Decoder::initOnce() {
     av_register_all();
     avcodec_register_all();
     avformat_network_init();
-    // register ffmpeg lock manager
-    av_lockmgr_register(&ffmpeg_lock);
     av_log_set_callback(Decoder::logFunction);
     av_log_set_level(AV_LOG_ERROR);
     VLOG(1) << "Registered ffmpeg libs";
@@ -264,7 +243,7 @@ bool Decoder::init(
           break;
       }
 
-      fmt = av_find_input_format(fmtName);
+      fmt = (AVInputFormat*)av_find_input_format(fmtName);
     }
 
     const size_t avioCtxBufferSize = kIoBufferSize;
@@ -467,10 +446,15 @@ int Decoder::getFrame(size_t workingTimeInMs) {
   // once decode() method gets called and grab some bytes
   // run this method again
   // init package
-  AVPacket avPacket;
-  av_init_packet(&avPacket);
-  avPacket.data = nullptr;
-  avPacket.size = 0;
+  // update 03/22: moving memory management to ffmpeg
+  AVPacket* avPacket;
+  avPacket = av_packet_alloc();
+  if (avPacket == nullptr) {
+    LOG(ERROR) << "decoder as not able to allocate the packet.";
+    return AVERROR_BUFFER_TOO_SMALL;
+  }
+  avPacket->data = nullptr;
+  avPacket->size = 0;
 
   auto end = std::chrono::steady_clock::now() +
       std::chrono::milliseconds(workingTimeInMs);
@@ -482,8 +466,12 @@ int Decoder::getFrame(size_t workingTimeInMs) {
   int result = 0;
   size_t decodingErrors = 0;
   bool decodedFrame = false;
-  while (!interrupted_ && inRange_.any() && !decodedFrame && watcher()) {
-    result = av_read_frame(inputCtx_, &avPacket);
+  while (!interrupted_ && inRange_.any() && !decodedFrame) {
+    if (watcher() == false) {
+      result = ETIMEDOUT;
+      break;
+    }
+    result = av_read_frame(inputCtx_, avPacket);
     if (result == AVERROR(EAGAIN)) {
       VLOG(4) << "Decoder is busy...";
       std::this_thread::yield();
@@ -500,10 +488,11 @@ int Decoder::getFrame(size_t workingTimeInMs) {
       break;
     }
 
-    // get stream
-    auto stream = findByIndex(avPacket.stream_index);
+    // get stream; if stream cannot be found reset the packet to
+    // default settings
+    auto stream = findByIndex(avPacket->stream_index);
     if (stream == nullptr || !inRange_.test(stream->getIndex())) {
-      av_packet_unref(&avPacket);
+      av_packet_unref(avPacket);
       continue;
     }
 
@@ -514,7 +503,8 @@ int Decoder::getFrame(size_t workingTimeInMs) {
       bool gotFrame = false;
       bool hasMsg = false;
       // packet either got consumed completely or not at all
-      if ((result = processPacket(stream, &avPacket, &gotFrame, &hasMsg)) < 0) {
+      if ((result = processPacket(
+               stream, avPacket, &gotFrame, &hasMsg, params_.fastSeek)) < 0) {
         LOG(ERROR) << "processPacket failed with code: " << result;
         break;
       }
@@ -544,11 +534,10 @@ int Decoder::getFrame(size_t workingTimeInMs) {
 
     result = 0;
 
-    av_packet_unref(&avPacket);
+    av_packet_unref(avPacket);
   }
 
-  av_packet_unref(&avPacket);
-
+  av_packet_free(&avPacket);
   VLOG(2) << "Interrupted loop"
           << ", interrupted_ " << interrupted_ << ", inRange_.any() "
           << inRange_.any() << ", decodedFrame " << decodedFrame << ", result "
@@ -556,8 +545,7 @@ int Decoder::getFrame(size_t workingTimeInMs) {
 
   // loop can be terminated, either by:
   // 1. explcitly iterrupted
-  // 2. terminated by workable timeout
-  // 3. unrecoverable error or ENODATA (end of stream)
+  // 3. unrecoverable error or ENODATA (end of stream) or ETIMEDOUT (timeout)
   // 4. decoded frames pts are out of the specified range
   // 5. success decoded frame
   if (interrupted_) {

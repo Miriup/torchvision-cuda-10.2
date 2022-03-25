@@ -25,7 +25,7 @@ Stream::~Stream() {
 }
 
 AVCodec* Stream::findCodec(AVCodecParameters* params) {
-  return avcodec_find_decoder(params->codec_id);
+  return (AVCodec*)avcodec_find_decoder(params->codec_id);
 }
 
 int Stream::openCodec(std::vector<DecoderMetadata>* metadata) {
