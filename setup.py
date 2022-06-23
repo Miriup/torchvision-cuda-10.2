@@ -331,6 +331,8 @@ def get_extensions():
 
     ffmpeg_exe = distutils.spawn.find_executable('ffmpeg')
     has_ffmpeg = ffmpeg_exe is not None
+    use_ffmpeg = os.getenv("TORCHVISION_USE_FFMPEG", "1") == "1"
+    has_ffmpeg = has_ffmpeg and use_ffmpeg
     print("FFmpeg found: {}".format(has_ffmpeg))
 
     if has_ffmpeg:
