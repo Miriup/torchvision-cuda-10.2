@@ -176,8 +176,10 @@ int64_t Decoder::seekCallback(int64_t offset, int whence) {
 void Decoder::initOnce() {
   static std::once_flag flagInit;
   std::call_once(flagInit, []() {
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 10, 100)
     av_register_all();
     avcodec_register_all();
+#endif
     avformat_network_init();
     av_log_set_callback(Decoder::logFunction);
     av_log_set_level(AV_LOG_ERROR);
