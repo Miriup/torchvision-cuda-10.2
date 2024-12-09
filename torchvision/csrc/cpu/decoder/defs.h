@@ -18,6 +18,10 @@ extern "C" {
 #include "libswscale/swscale.h"
 }
 
+#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(59, 16, 100)
+#define AVCodec const AVCodec
+#endif
+
 namespace ffmpeg {
 
 // bit mask of formats, keep them in form 2^n
